@@ -1,0 +1,76 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: APK bauen
+        working-directory: android
+        run: gradle assembleDebug --no-daemon
+      - name: APK umbenennen
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk Lueftung.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: Lueftung.apk
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: PlatformIO installieren
+        run: pip install platformio
+      - name: Firmware bauen
+        working-directory: firmware
+        run: pio run
+      - name: Komplett-Image fuer Erstinstallation erzeugen
+        working-directory: firmware
+        run: |
+          B=.pio/build/esp32dev
+          APP0=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -1)
+          pio pkg exec -p tool-esptoolpy -- esptool.py --chip esp32 merge_bin -o ../lueftung-erstinstallation.bin \
+            --flash_mode dio --flash_freq 40m --flash_size 4MB \
+            0x1000 $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 "$APP0" 0x10000 $B/firmware.bin
+          cp $B/firmware.bin ../lueftung-update.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            lueftung-erstinstallation.bin
+            lueftung-update.bin
+
+  release:
+    needs: [android, firmware]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }}
+          make_latest: true
+          files: |
+            Lueftung.apk
+            lueftung-erstinstallation.bin
+            lueftung-update.bin
