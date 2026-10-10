@@ -29,10 +29,27 @@
 
 #define FW_VERSION "1.0.0"
 
-static const int PIN_RX = 16;   // RO des RS-485-Moduls
-static const int PIN_TX = 17;   // DI des RS-485-Moduls
-static const int PIN_DE = 4;    // DE + /RE (gebrueckt). Bei Auto-Richtungsmodulen unbenutzt
-static const int PIN_LED = 2;
+// Pins je Hardware-Variante (platformio.ini setzt sie per build_flags).
+// Standard: ESP32-DevKit + RS-485-Modul mit DE/RE.  ATOM + Atomic RS485 Base: RX 22, TX 19, Richtung automatisch.
+#ifndef BUS_RX
+#define BUS_RX 16
+#endif
+#ifndef BUS_TX
+#define BUS_TX 17
+#endif
+#ifndef BUS_DE
+#define BUS_DE 4      // -1 = Modul schaltet Richtung selbst
+#endif
+#ifndef STATUS_LED
+#define STATUS_LED 2  // -1 = keine einfache LED
+#endif
+static const int PIN_RX = BUS_RX;
+static const int PIN_TX = BUS_TX;
+static const int PIN_DE = BUS_DE;
+static const int PIN_LED = STATUS_LED;
+
+static inline void deWrite(int v) { if (PIN_DE >= 0) digitalWrite(PIN_DE, v); }
+static inline void ledWrite(int v) { if (PIN_LED >= 0) digitalWrite(PIN_LED, v); }
 
 static const char *AP_SSID = "Lueftung-Setup";
 static const char *AP_PASS = "lueftung123";
@@ -436,12 +453,12 @@ bool sendFrames(const std::vector<String> &frames) {
       // auf Busruhe warten (max. 300 ms)
       uint32_t w0 = millis();
       while (millis() - lastRxMs < 15 && millis() - w0 < 300) delay(1);
-      digitalWrite(PIN_DE, HIGH);
+      deWrite(HIGH);
       delayMicroseconds(80);
       Serial2.write(b.data(), b.size());
       Serial2.flush();
       delayMicroseconds(2000000UL / cfg.baud + 20);  // Stoppbit sicher raus
-      digitalWrite(PIN_DE, LOW);
+      deWrite(LOW);
       pushRing(toHex(b.data(), b.size()), millis(), false, matchCommand(toHex(b.data(), b.size())), true);
       delay(cfg.sendGapMs);
     }
@@ -453,9 +470,9 @@ bool executeCommand(const String &key, const String &src) {
   auto it = commands.find(key);
   if (it == commands.end() || it->second.frames.empty()) return false;
   setState(key, src);
-  digitalWrite(PIN_LED, HIGH);
+  ledWrite(HIGH);
   bool ok = sendFrames(it->second.frames);
-  digitalWrite(PIN_LED, LOW);
+  ledWrite(LOW);
   return ok;
 }
 
@@ -832,7 +849,7 @@ fetch('/api/config',{method:'POST',body:JSON.stringify({ssid:f.get('ssid'),pass:
 const char PAGE_UPDATE[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Update</title></head>
 <body style="font-family:sans-serif;margin:16px"><h2>Firmware-Update</h2>
-<p>Datei <b>lueftung-update.bin</b> waehlen (nicht die Erstinstallations-Datei).</p>
+<p>Datei <b>lueftung-update.bin</b> (ATOM: <b>lueftung-atom-update.bin</b>) waehlen, nicht die Erstinstallations-Datei.</p>
 <form method="POST" action="/update" enctype="multipart/form-data"><input type="file" name="fw" accept=".bin"><br><br>
 <button>Hochladen</button></form></body></html>)HTML";
 
@@ -900,10 +917,10 @@ void startWifi() {
     uint32_t t0 = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < 20000) {
       delay(250);
-      digitalWrite(PIN_LED, !digitalRead(PIN_LED));
+      if (PIN_LED >= 0) digitalWrite(PIN_LED, !digitalRead(PIN_LED));
     }
   }
-  digitalWrite(PIN_LED, LOW);
+  ledWrite(LOW);
   if (WiFi.status() != WL_CONNECTED) {
     apMode = true;
     WiFi.mode(WIFI_AP);
@@ -939,9 +956,9 @@ void checkSchedules() {
 }
 
 void setup() {
-  pinMode(PIN_DE, OUTPUT);
-  digitalWrite(PIN_DE, LOW);
-  pinMode(PIN_LED, OUTPUT);
+  if (PIN_DE >= 0) pinMode(PIN_DE, OUTPUT);
+  deWrite(LOW);
+  if (PIN_LED >= 0) pinMode(PIN_LED, OUTPUT);
   Serial.begin(115200);
   Serial.println("\nLueftungs-Bruecke " FW_VERSION);
 
