@@ -98,7 +98,7 @@ fun ControlScreen(vm: MainViewModel) {
         Section("Feuchte") {
             StateLine(s.feuchte)
             Spacer(Modifier.height(8.dp))
-            CmdRow(listOf("feuchte1", "feuchte2", "feuchte3"), byKey, s.feuchte.key, vm)
+            CmdRow(listOf("feuchte1", "feuchte2", "feuchte3", "feuchte4", "feuchte5"), byKey, s.feuchte.key, vm, short = true)
         }
         Section("Betriebsart") {
             StateLine(s.modus)
@@ -147,6 +147,8 @@ private fun CmdRow(keys: List<String>, byKey: Map<String, Cmd>, current: String?
             val label = when {
                 short && k == "aus" -> "Aus"
                 short && k.startsWith("stufe") -> listOf("I", "II", "III", "IV", "V").getOrElse(k.removePrefix("stufe").toIntOrNull()?.minus(1) ?: 0) { k }
+                short && k.startsWith("feuchte") -> k.removePrefix("feuchte")
+                (c?.label ?: "").let { l -> l.startsWith("W") && l.contains("rmer") } -> "WRG"
                 else -> c?.label ?: k
             }
             val enabled = c?.learned == true

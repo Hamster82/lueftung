@@ -89,6 +89,10 @@ Die Beschriftungen „Modus 1–3“ (dritte Zeile am Bedienfeld) kannst du unte
 - **Filter:** Betriebsstundenzähler (zählt, solange nicht „Aus“) mit einstellbarem Intervall, Standard 2160 h
 - **Bus-Monitor:** Live-Mitschnitt, Kennzeichnung neuer Telegramme, Testsenden, Protokoll-Export
 
+- **Klima (ab Firmware 1.1):** Außentemperatur und -feuchte von Open-Meteo für den eingestellten Ort, optional Innensensor
+  (M5Stack ENV III/IV mit SHT30/SHT40 am Grove-Anschluss, wird automatisch erkannt), Regeln wie
+  „Wenn Außentemperatur unter −5 °C → Stufe I“ oder „Außenluft trockener als innen → Stufe IV“, 24-h-Verlauf
+
 **Grenzen:** Die eigene Filtermeldung des Geräts (alle LEDs an) und die Luftfeuchte können erst gelesen werden,
 wenn das Protokoll entschlüsselt ist.
 
@@ -114,3 +118,8 @@ die App (`Lueftung.apk`) und die Firmware und legt alles unter **Releases** ab.
 | POST | `/api/send` `{hex}` | Rohtelegramm senden |
 | GET/POST | `/api/config` | Baudrate, Format, Pause, WLAN |
 | GET | `/api/baud/detect` | Baudrate messen |
+| GET | `/api/klima` | Außen-/Innenwerte, Regeln, Automatik-Zustand |
+| POST | `/api/klima/config` `{lat, lon, place, autoEn, holdMin}` | Ort und Automatik |
+| POST | `/api/klima/rules` `[{sensor, op, value, hyst, cmd, en}]` | Regeln (sensor: aussenT, aussenRH, innenT, innenRH, absDiff) |
+| POST | `/api/klima/sensor` `{outT, outRH, inT, inRH}` | Werte von außen einspeisen, z. B. aus ioBroker |
+| GET | `/api/history` | 24-h-Verlauf in 5-min-Schritten |

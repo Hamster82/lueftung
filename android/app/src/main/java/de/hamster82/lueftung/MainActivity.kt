@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -114,6 +115,7 @@ fun MainScreen(vm: MainViewModel) {
             NavigationBar {
                 val items = listOf(
                     "Steuerung" to Icons.Filled.Home,
+                    "Klima" to Icons.Filled.Info,
                     "Zeitpläne" to Icons.Filled.DateRange,
                     "Anlernen" to Icons.Filled.Build,
                     "Bus" to Icons.Filled.Settings,
@@ -133,8 +135,9 @@ fun MainScreen(vm: MainViewModel) {
         Box(Modifier.padding(pad)) {
             when (tab) {
                 0 -> ControlScreen(vm)
-                1 -> ScheduleScreen(vm)
-                2 -> LearnScreen(vm)
+                1 -> ClimateScreen(vm)
+                2 -> ScheduleScreen(vm)
+                3 -> LearnScreen(vm)
                 else -> BusScreen(vm)
             }
         }
@@ -155,7 +158,7 @@ fun Section(title: String, modifier: Modifier = Modifier, content: @Composable C
 
 val KEY_ORDER = listOf(
     "aus", "stufe1", "stufe2", "stufe3", "stufe4", "stufe5",
-    "feuchte1", "feuchte2", "feuchte3", "modus1", "modus2", "modus3"
+    "feuchte1", "feuchte2", "feuchte3", "feuchte4", "feuchte5", "modus1", "modus2", "modus3"
 )
 
 fun sortCommands(list: List<Cmd>): List<Cmd> =

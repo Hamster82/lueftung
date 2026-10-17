@@ -71,7 +71,7 @@ class Api(private val hostProvider: () -> String) {
         return "http://$h"
     }
 
-    private suspend fun request(method: String, path: String, body: String? = null, readTimeout: Int = 6000): String =
+    internal suspend fun request(method: String, path: String, body: String? = null, readTimeout: Int = 6000): String =
         withContext(Dispatchers.IO) {
             val conn = try {
                 URL(baseUrl() + path).openConnection() as HttpURLConnection
@@ -106,7 +106,7 @@ class Api(private val hostProvider: () -> String) {
             }
         }
 
-    private suspend fun post(path: String, body: JSONObject = JSONObject()) = request("POST", path, body.toString())
+    internal suspend fun post(path: String, body: JSONObject = JSONObject()) = request("POST", path, body.toString())
 
     private fun group(o: JSONObject?): GroupState {
         if (o == null || o.isNull("key")) return GroupState(null, "unbekannt", "", "")

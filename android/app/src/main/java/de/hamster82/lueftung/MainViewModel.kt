@@ -123,6 +123,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         while (true) {
             refreshStatus()
             if (_status.value != null && monitorActive.value && !monitorPaused.value) pollFrames()
+            if (_status.value != null && klimaActive.value) pollKlima()
             val fast = (monitorActive.value && !monitorPaused.value) || learnPolling
             delay(if (fast) 1000 else 3000)
         }
@@ -289,6 +290,85 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun restartDevice() = act("Gerät startet neu") { api.restart() }
 
     fun baseUrlOrNull(): String? = runCatching { api.baseUrl() }.getOrNull()
+
+    // ------------------------------------------------------------ Klima
+    val klimaActive = MutableStateFlow(false)
+    private val _klima = MutableStateFlow<Klima?>(null)
+    val klima = _klima.asStateFlow()
+    private val _history = MutableStateFlow<History?>(null)
+    val history = _history.asStateFlow()
+    private val _places = MutableStateFlow<List<Place>>(emptyList())
+    val places = _places.asStateFlow()
+    private val _placeSearching = MutableStateFlow(false)
+    val placeSearching = _placeSearching.asStateFlow()
+    private var lastKlimaFetch = 0L
+    private var lastHistoryFetch = 0L
+
+    private suspend fun pollKlima(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (force || now - lastKlimaFetch > 10_000) {
+            lastKlimaFetch = now
+            runCatching { _klima.value = api.klima() }
+        }
+        if (force || now - lastHistoryFetch > 60_000) {
+            lastHistoryFetch = now
+            runCatching { _history.value = api.history() }
+        }
+    }
+
+    fun refreshKlima() {
+        viewModelScope.launch { pollKlima(force = true) }
+    }
+
+    fun saveRules(list: List<Rule>) = act("Regeln gespeichert") {
+        api.saveRules(list)
+        _klima.value = api.klima()
+    }
+
+    fun setAuto(on: Boolean) = act(if (on) "Automatik ein" else "Automatik aus") {
+        api.saveKlimaConfig(null, on, null)
+        _klima.value = api.klima()
+    }
+
+    fun setHold(min: Int) = act("Mindestzeit gespeichert") {
+        api.saveKlimaConfig(null, null, min)
+        _klima.value = api.klima()
+    }
+
+    fun searchPlace(q: String) {
+        if (q.isBlank()) return
+        viewModelScope.launch {
+            _placeSearching.value = true
+            try {
+                _places.value = searchPlaces(q)
+                if (_places.value.isEmpty()) say("Kein Ort gefunden")
+            } catch (e: ApiException) {
+                say(e.message ?: "Fehler")
+            } finally {
+                _placeSearching.value = false
+            }
+        }
+    }
+
+    fun choosePlace(p: Place) {
+        _places.value = emptyList()
+        viewModelScope.launch {
+            try {
+                api.saveKlimaConfig(p, null, null)
+                val err = api.refreshWeather()
+                say(if (err.isEmpty()) "Ort ${p.name} gespeichert, Wetter geladen" else "Ort gespeichert – $err")
+                pollKlima(force = true)
+            } catch (e: ApiException) {
+                say(e.message ?: "Fehler")
+            }
+        }
+    }
+
+    fun refreshWeather() = act {
+        val err = api.refreshWeather()
+        say(if (err.isEmpty()) "Wetter aktualisiert" else err)
+        pollKlima(force = true)
+    }
 
     init {
         if (_host.value.isEmpty()) discover() else refreshAll()

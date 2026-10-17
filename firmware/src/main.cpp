@@ -12,6 +12,8 @@
 //   * Betriebsstundenzaehler mit Filterwarnung
 //   * WLAN-Einrichtung per Captive Portal, OTA-Update im Browser
 //   * REST-API fuer die Android-App
+//   * Klima (klima.h): Aussenwetter Open-Meteo, Innensensor SHT3x/SHT4x,
+//     Regeln nach Temperatur/Feuchte, 24-h-Verlauf
 // =====================================================================
 #include <Arduino.h>
 #include <WiFi.h>
@@ -27,7 +29,7 @@
 #include <vector>
 #include <time.h>
 
-#define FW_VERSION "1.0.0"
+#define FW_VERSION "1.1.0"
 
 // Pins je Hardware-Variante (platformio.ini setzt sie per build_flags).
 // Standard: ESP32-DevKit + RS-485-Modul mit DE/RE.  ATOM + Atomic RS485 Base: RX 22, TX 19, Richtung automatisch.
@@ -254,10 +256,16 @@ void saveConfig() {
 
 void addDefaultCommands() {
   const char *keys[] = {"aus", "stufe1", "stufe2", "stufe3", "stufe4", "stufe5",
-                        "feuchte1", "feuchte2", "feuchte3", "modus1", "modus2", "modus3"};
+                        "feuchte1", "feuchte2", "feuchte3", "feuchte4", "feuchte5",
+                        "modus1", "modus2", "modus3"};
   const char *labels[] = {"Aus", "Stufe I", "Stufe II", "Stufe III", "Stufe IV", "Stufe V",
-                          "Feuchte 1", "Feuchte 2", "Feuchte 3", "Modus 1", "Modus 2", "Modus 3"};
-  for (int i = 0; i < 12; i++) {
+                          "Feuchte 1", "Feuchte 2", "Feuchte 3", "Feuchte 4", "Feuchte 5",
+                          "Abluft", "Zuluft", "Wärmerückgewinnung"};
+  for (int i = 0; i < 14; i++) {
+    // alte Standardnamen "Modus N" durch die Betriebsarten ersetzen
+    auto it = commands.find(keys[i]);
+    if (it != commands.end() && String(keys[i]).startsWith("modus") && it->second.label == String("Modus ") + String(keys[i]).substring(5))
+      it->second.label = labels[i];
     if (!commands.count(keys[i])) commands[keys[i]] = Command{labels[i], {}};
   }
 }
@@ -402,7 +410,10 @@ String matchCommand(const String &hex) {
   return "";
 }
 
+void klimaOnState(const String &key, const String &src);   // klima.h
+
 void setState(const String &key, const String &src) {
+  klimaOnState(key, src);
   String g = groupOf(key);
   GroupState &s = state[g];
   s.key = key;
@@ -829,6 +840,9 @@ void apiRestart() {
   restartAt = millis() + 500;
 }
 
+// ================================================================= Klima
+#include "klima.h"
+
 // ================================================================= Webseiten
 const char PAGE_ROOT[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Lueftung</title>
@@ -876,6 +890,7 @@ void setupRoutes() {
   server.on("/api/baud/detect", HTTP_GET, apiBaudDetect);
   server.on("/api/filter/reset", HTTP_POST, apiFilterReset);
   server.on("/api/restart", HTTP_POST, apiRestart);
+  klimaRoutes();
 
   server.on("/update", HTTP_GET, [] { server.send_P(200, "text/html", PAGE_UPDATE); });
   server.on(
@@ -969,6 +984,7 @@ void setup() {
   loadConfig();
   loadCommands();
   loadSchedules();
+  klimaSetup();
 
   frameQ = xQueueCreate(48, sizeof(RawFrame));
   startBus();
@@ -1011,8 +1027,11 @@ void loop() {
     if (apMode && cfg.ssid.length() && now > 600000UL && WiFi.softAPgetStationNum() == 0) ESP.restart();
   }
 
+  klimaLoop();
+
   if (restartPending && (int32_t)(now - restartAt) >= 0) {
     prefs.putULong("runtime", runtimeSec);
+    klimaBeforeRestart();
     ESP.restart();
   }
   delay(1);
