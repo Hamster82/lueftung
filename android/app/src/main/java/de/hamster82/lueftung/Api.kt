@@ -35,6 +35,9 @@ data class Status(
     val boostRemainingS: Int,
     val boostKey: String,
     val learnActive: Boolean,
+    val variant: String = "",
+    val otaState: String = "",
+    val otaError: String = "",
 )
 
 data class Cmd(val key: String, val label: String, val group: String, val frames: List<String>) {
@@ -143,6 +146,9 @@ class Api(private val hostProvider: () -> String) {
             boostRemainingS = b.optInt("remainingS"),
             boostKey = b.optString("key"),
             learnActive = l.optBoolean("active"),
+            variant = o.optString("variant"),
+            otaState = o.optJSONObject("ota")?.optString("state").orEmpty(),
+            otaError = o.optJSONObject("ota")?.optString("error").orEmpty(),
         )
     }
 
@@ -244,4 +250,6 @@ class Api(private val hostProvider: () -> String) {
     suspend fun resetFilter() { post("/api/filter/reset") }
 
     suspend fun restart() { post("/api/restart") }
+
+    suspend fun onlineUpdate() { post("/api/ota/github") }
 }

@@ -171,8 +171,33 @@ private fun DeviceCard(vm: MainViewModel, status: Status?, error: String?) {
         }
         found.forEach { d -> TextButton(onClick = { vm.setHost(d.address) }) { Text("${d.name} – ${d.address}") } }
         if (status != null) {
+            var confirmOta by remember { mutableStateOf(false) }
+            val ota = when (status.otaState) {
+                "startet", "laedt" -> "Online-Update läuft … (ca. 1 min, danach Neustart)"
+                "fertig" -> "Update installiert – Brücke startet neu"
+                "fehler" -> "Online-Update fehlgeschlagen: ${status.otaError}"
+                else -> null
+            }
+            if (ota != null) {
+                Text(ota, style = MaterialTheme.typography.bodySmall,
+                    color = if (status.otaState == "fehler") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+            }
+            Button(
+                onClick = { confirmOta = true },
+                enabled = status.otaState != "laedt" && status.otaState != "startet" && !status.ap,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Online-Update (neueste Firmware von GitHub)") }
+            if (confirmOta) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { confirmOta = false },
+                    title = { Text("Firmware aktualisieren?") },
+                    text = { Text("Die Brücke lädt die neueste Firmware selbst aus dem Internet, installiert sie und startet neu. Einstellungen und angelernte Befehle bleiben erhalten. Dauer ca. 1 Minute.") },
+                    confirmButton = { TextButton(onClick = { confirmOta = false; vm.onlineUpdate() }) { Text("Aktualisieren") } },
+                    dismissButton = { TextButton(onClick = { confirmOta = false }) { Text("Abbrechen") } }
+                )
+            }
             Row {
-                TextButton(onClick = { vm.baseUrlOrNull()?.let { openUrl(ctx, "$it/update") } }) { Text("Firmware-Update") }
+                TextButton(onClick = { vm.baseUrlOrNull()?.let { openUrl(ctx, "$it/update") } }) { Text("Datei hochladen") }
                 TextButton(onClick = { vm.baseUrlOrNull()?.let { openUrl(ctx, it) } }) { Text("WLAN ändern") }
                 TextButton(onClick = { vm.restartDevice() }) { Text("Neustart") }
             }

@@ -289,6 +289,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun restartDevice() = act("Gerät startet neu") { api.restart() }
 
+    fun onlineUpdate() = act("Online-Update gestartet – die Brücke lädt die neueste Firmware und startet neu") {
+        api.onlineUpdate()
+    }
+
     fun baseUrlOrNull(): String? = runCatching { api.baseUrl() }.getOrNull()
 
     // ------------------------------------------------------------ Klima

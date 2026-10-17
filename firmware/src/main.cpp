@@ -21,6 +21,8 @@
 #include <DNSServer.h>
 #include <ESPmDNS.h>
 #include <Update.h>
+#include <HTTPUpdate.h>
+#include <WiFiClientSecure.h>
 #include <Preferences.h>
 #include <LittleFS.h>
 #include <ArduinoJson.h>
@@ -29,7 +31,10 @@
 #include <vector>
 #include <time.h>
 
-#define FW_VERSION "1.1.0"
+#define FW_VERSION "1.1.1"
+#ifndef FW_VARIANT
+#define FW_VARIANT "devkit"
+#endif
 
 // Pins je Hardware-Variante (platformio.ini setzt sie per build_flags).
 // Standard: ESP32-DevKit + RS-485-Modul mit DE/RE.  ATOM + Atomic RS485 Base: RX 22, TX 19, Richtung automatisch.
@@ -137,6 +142,11 @@ WebServer server(80);
 DNSServer dns;
 bool apMode = false;
 bool restartPending = false;
+String uploadErr;
+static const char *UPDATE_FILE = (strcmp(FW_VARIANT, "atom") == 0) ? "lueftung-atom-update.bin" : "lueftung-update.bin";
+// Online-Update direkt von GitHub
+bool otaPending = false;
+String otaState, otaError;
 uint32_t restartAt = 0;
 
 // ================================================================= Helfer
@@ -530,6 +540,11 @@ void stateToJson(JsonObject o, const char *g) {
 void apiStatus() {
   JsonDocument d;
   d["fw"] = FW_VERSION;
+  d["variant"] = FW_VARIANT;
+  JsonObject ota = d["ota"].to<JsonObject>();
+  ota["state"] = otaState;
+  ota["error"] = otaError;
+  ota["file"] = UPDATE_FILE;
   d["uptimeS"] = millis() / 1000;
   d["ap"] = apMode;
   d["ip"] = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
@@ -834,6 +849,37 @@ void apiFilterReset() {
   sendOk();
 }
 
+void apiOtaGithub() {
+  if (apMode || WiFi.status() != WL_CONNECTED) return sendErr(409, "Kein Internet: Bruecke ist nicht im Heim-WLAN");
+  if (otaPending || otaState == "laedt") return sendErr(409, "Update laeuft bereits");
+  otaPending = true;
+  otaState = "startet";
+  otaError = "";
+  sendOk();
+}
+
+void runGithubOta() {
+  otaPending = false;
+  otaState = "laedt";
+  stopBus();
+  prefs.putULong("runtime", runtimeSec);
+  WiFiClientSecure cli;
+  cli.setInsecure();
+  httpUpdate.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  httpUpdate.rebootOnUpdate(false);
+  String url = String("https://github.com/Hamster82/lueftung/releases/latest/download/") + UPDATE_FILE;
+  t_httpUpdate_return r = httpUpdate.update(cli, url);
+  if (r == HTTP_UPDATE_OK) {
+    otaState = "fertig";
+    restartPending = true;
+    restartAt = millis() + 1500;
+  } else {
+    otaState = "fehler";
+    otaError = httpUpdate.getLastErrorString();
+    startBus();
+  }
+}
+
 void apiRestart() {
   sendOk();
   restartPending = true;
@@ -863,7 +909,7 @@ fetch('/api/config',{method:'POST',body:JSON.stringify({ssid:f.get('ssid'),pass:
 const char PAGE_UPDATE[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Update</title></head>
 <body style="font-family:sans-serif;margin:16px"><h2>Firmware-Update</h2>
-<p>Datei <b>lueftung-update.bin</b> (ATOM: <b>lueftung-atom-update.bin</b>) waehlen, nicht die Erstinstallations-Datei.</p>
+<p>Datei <b>lueftung-update.bin</b> (ATOM: <b>lueftung-atom-update.bin</b>) waehlen, nicht die Erstinstallations-Datei.<br>Einfacher: in der App Reiter Bus &rarr; <b>Online-Update</b>.</p>
 <form method="POST" action="/update" enctype="multipart/form-data"><input type="file" name="fw" accept=".bin"><br><br>
 <button>Hochladen</button></form></body></html>)HTML";
 
@@ -890,25 +936,44 @@ void setupRoutes() {
   server.on("/api/baud/detect", HTTP_GET, apiBaudDetect);
   server.on("/api/filter/reset", HTTP_POST, apiFilterReset);
   server.on("/api/restart", HTTP_POST, apiRestart);
+  server.on("/api/ota/github", HTTP_POST, apiOtaGithub);
   klimaRoutes();
 
   server.on("/update", HTTP_GET, [] { server.send_P(200, "text/html", PAGE_UPDATE); });
   server.on(
       "/update", HTTP_POST,
       [] {
-        bool ok = !Update.hasError();
-        server.send(200, "text/html", ok ? "<h3>Update OK - Neustart ...</h3>" : "<h3>Update fehlgeschlagen</h3>");
-        if (ok) { restartPending = true; restartAt = millis() + 1000; }
+        bool ok = uploadErr.isEmpty() && !Update.hasError();
+        String msg;
+        if (ok) {
+          msg = "<h3>Update OK &ndash; Neustart ...</h3>";
+          restartPending = true;
+          restartAt = millis() + 1000;
+        } else {
+          String e = uploadErr.length() ? uploadErr : String(Update.errorString());
+          msg = "<h3>Update fehlgeschlagen</h3><p>Grund: " + e + "</p>";
+          if (e.indexOf("Magic") >= 0)
+            msg += "<p>Das ist keine Update-Datei. Bitte <b>" + String(UPDATE_FILE) + "</b> w&auml;hlen, nicht die Erstinstallations-Datei.</p>";
+          msg += "<p><a href='/update'>Zur&uuml;ck</a></p>";
+          startBus();
+        }
+        server.send(200, "text/html; charset=utf-8", msg);
       },
       [] {
         HTTPUpload &u = server.upload();
         if (u.status == UPLOAD_FILE_START) {
+          uploadErr = "";
           stopBus();
-          Update.begin(UPDATE_SIZE_UNKNOWN);
+          if (!Update.begin(UPDATE_SIZE_UNKNOWN)) uploadErr = Update.errorString();
         } else if (u.status == UPLOAD_FILE_WRITE) {
-          Update.write(u.buf, u.currentSize);
+          if (uploadErr.isEmpty() && Update.write(u.buf, u.currentSize) != u.currentSize) uploadErr = Update.errorString();
         } else if (u.status == UPLOAD_FILE_END) {
-          Update.end(true);
+          if (uploadErr.isEmpty() && u.totalSize < 100000) uploadErr = "Datei zu klein (" + String(u.totalSize) + " Byte) &ndash; falsche Datei?";
+          if (uploadErr.isEmpty() && !Update.end(true)) uploadErr = Update.errorString();
+          if (uploadErr.length()) Update.abort();
+        } else if (u.status == UPLOAD_FILE_ABORTED) {
+          Update.abort();
+          uploadErr = "Upload abgebrochen";
         }
       });
 
@@ -1028,6 +1093,10 @@ void loop() {
   }
 
   klimaLoop();
+  if (otaPending) {
+    klimaBeforeRestart();
+    runGithubOta();
+  }
 
   if (restartPending && (int32_t)(now - restartAt) >= 0) {
     prefs.putULong("runtime", runtimeSec);
