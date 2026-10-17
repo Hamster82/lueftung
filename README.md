@@ -16,6 +16,17 @@ Ein ESP32 mit RS-485-Modul hängt parallel zum Bedienelement am Bus, hört mit u
 
 ---
 
+## Protokoll (aus Mitschnitt ermittelt)
+
+| Telegramm | Bedeutung |
+|---|---|
+| `Bedienfeld:V3H40M3E0N1` (ASCII) | Bedienteil → Master, immer der komplette Zustand: V = Stufe 0–5, H = Feuchte-Sollwert (99 = aus), M = Betriebsart 1 Abluft / 2 Zuluft / 3 WRG, E/N unbekannt |
+| `Master:` + 6 Byte (FE) + `V66` | Master, etwa alle 70 s: V = 50 ± 8 × Stufe, Vorzeichen = Luftrichtung |
+
+Ab Firmware 1.2 baut die Brücke die Bedienfeld-Telegramme selbst aus dem aktuellen Zustand (kein Anlernen nötig)
+und gleicht mit dem Bedienteil ab: Tippt jemand am Bedienteil, wird nur die dort geänderte Einstellung übernommen,
+der Rest bleibt wie in der App eingestellt. Die Brücke sendet nie Master-Telegramme.
+
 ## 1. Einkaufsliste (ca. 20 €)
 
 | Teil | Hinweis |

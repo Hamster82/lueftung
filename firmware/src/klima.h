@@ -56,11 +56,14 @@ bool weatherDue = true;
 String weatherErr;
 uint32_t lastRuleEval = 0;
 
+int masterVNow();   // proto.h: aktueller V-Wert des Masters oder -1
+
 // ---------------------------------------------------------------- Verlauf
 struct HistPoint {
   uint32_t epoch;
   int16_t oT, oRH, iT, iRH;    // x10, INT16_MIN = fehlt
   int8_t stufe, feuchte, modus; // -1 = unbekannt
+  int16_t mv;                   // V-Wert aus dem Master-Telegramm, INT16_MIN = keiner
 };
 static const int HIST_N = 288;   // 24 h in 5-min-Schritten
 static const uint32_t HIST_STEP = 300;
@@ -76,7 +79,7 @@ static inline int16_t enc10(bool ok, float v) {
 
 int8_t keyIndex(const String &key) {
   if (!key.length()) return -1;
-  if (key == "aus") return 0;
+  if (key == "aus" || key == "feuchte0") return 0;
   int n = -1;
   if (key.startsWith("stufe")) n = key.substring(5).toInt();
   else if (key.startsWith("feuchte")) n = key.substring(7).toInt();
@@ -85,7 +88,7 @@ int8_t keyIndex(const String &key) {
 }
 
 void histSave() {
-  File f = LittleFS.open("/hist.bin", "w");
+  File f = LittleFS.open("/hist2.bin", "w");
   if (!f) return;
   for (int i = 0; i < histCount; i++) {
     int idx = (histHead - histCount + i + HIST_N) % HIST_N;
@@ -95,7 +98,7 @@ void histSave() {
 }
 
 void histLoad() {
-  File f = LittleFS.open("/hist.bin", "r");
+  File f = LittleFS.open("/hist2.bin", "r");
   if (!f) return;
   histCount = 0;
   histHead = 0;
@@ -129,6 +132,7 @@ void histTick() {
   p.stufe = keyIndex(state["stufe"].key);
   p.feuchte = keyIndex(state["feuchte"].key);
   p.modus = keyIndex(state["modus"].key);
+  p.mv = (masterVNow() >= 0) ? (int16_t)masterVNow() : INT16_MIN;
   hist[histHead] = p;
   histHead = (histHead + 1) % HIST_N;
   if (histCount < HIST_N) histCount++;
@@ -496,7 +500,8 @@ void apiHistory() {
     if (!first) chunk += ',';
     first = false;
     chunk += "[" + String(p.epoch) + "," + num(p.oT) + "," + num(p.oRH) + "," + num(p.iT) + "," + num(p.iRH) + "," +
-             idv(p.stufe) + "," + idv(p.feuchte) + "," + idv(p.modus) + "]";
+             idv(p.stufe) + "," + idv(p.feuchte) + "," + idv(p.modus) + "," +
+             (p.mv == INT16_MIN ? String("null") : String(p.mv)) + "]";
     if (chunk.length() > 1200) {
       server.sendContent(chunk);
       chunk = "";

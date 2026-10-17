@@ -183,13 +183,13 @@ private fun ScheduleDialog(
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         cmds.forEach { c ->
                             DropdownMenuItem(
-                                text = { Text(c.label + if (c.learned) "" else "  (nicht angelernt)") },
+                                text = { Text(c.label + if (c.sendable) "" else "  (nicht angelernt)") },
                                 onClick = { cmd = c.key; menu = false }
                             )
                         }
                     }
                 }
-                if (cmds.firstOrNull { it.key == cmd }?.learned == false) {
+                if (cmds.firstOrNull { it.key == cmd }?.sendable == false) {
                     Text("Dieser Befehl ist noch nicht angelernt und wird erst danach ausgeführt.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }

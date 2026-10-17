@@ -289,6 +289,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun restartDevice() = act("Gerät startet neu") { api.restart() }
 
+    fun saveProto(enabled: Boolean? = null, sync: Boolean? = null, hLevels: List<Int>? = null) = act("Gespeichert") {
+        api.saveProto(enabled, sync, hLevels)
+        refreshStatus()
+        runCatching { _commands.value = api.commands() }
+    }
+
     fun onlineUpdate() = act("Online-Update gestartet – die Brücke lädt die neueste Firmware und startet neu") {
         api.onlineUpdate()
     }

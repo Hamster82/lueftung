@@ -31,7 +31,7 @@
 #include <vector>
 #include <time.h>
 
-#define FW_VERSION "1.1.1"
+#define FW_VERSION "1.2.0"
 #ifndef FW_VARIANT
 #define FW_VARIANT "devkit"
 #endif
@@ -266,12 +266,12 @@ void saveConfig() {
 
 void addDefaultCommands() {
   const char *keys[] = {"aus", "stufe1", "stufe2", "stufe3", "stufe4", "stufe5",
-                        "feuchte1", "feuchte2", "feuchte3", "feuchte4", "feuchte5",
+                        "feuchte0", "feuchte1", "feuchte2", "feuchte3", "feuchte4", "feuchte5",
                         "modus1", "modus2", "modus3"};
   const char *labels[] = {"Aus", "Stufe I", "Stufe II", "Stufe III", "Stufe IV", "Stufe V",
-                          "Feuchte 1", "Feuchte 2", "Feuchte 3", "Feuchte 4", "Feuchte 5",
+                          "Feuchte aus", "Feuchte 1", "Feuchte 2", "Feuchte 3", "Feuchte 4", "Feuchte 5",
                           "Abluft", "Zuluft", "Wärmerückgewinnung"};
-  for (int i = 0; i < 14; i++) {
+  for (int i = 0; i < 15; i++) {
     // alte Standardnamen "Modus N" durch die Betriebsarten ersetzen
     auto it = commands.find(keys[i]);
     if (it != commands.end() && String(keys[i]).startsWith("modus") && it->second.label == String("Modus ") + String(keys[i]).substring(5))
@@ -433,7 +433,13 @@ void setState(const String &key, const String &src) {
   if (g == "stufe" && boost.active && src != "Stosslueften") boost.active = false;
 }
 
+bool protoOnFrame(const uint8_t *d, size_t n);   // proto.h
+bool protoHandles(const String &key);
+bool protoSend(const String &key);
+void protoToJson(JsonObject o);
+
 void processFrame(const RawFrame &f) {
+  bool recognized = protoOnFrame(f.d, f.len);
   String hex = toHex(f.d, f.len);
   if (f.total > f.len) hex += " ...(" + String(f.total) + " Byte)";
   bool isNew = false;
@@ -452,7 +458,7 @@ void processFrame(const RawFrame &f) {
     it->second.lastSeen = f.t;
   }
   String known = matchCommand(hex);
-  if (known.length()) {
+  if (known.length() && !recognized) {
     GroupState &gs = state[groupOf(known)];
     // nur Zustandswechsel werten (eigenes Echo / zyklische Wiederholung ignorieren)
     if (gs.key != known) setState(known, "Bedienfeld");
@@ -488,6 +494,13 @@ bool sendFrames(const std::vector<String> &frames) {
 }
 
 bool executeCommand(const String &key, const String &src) {
+  if (protoHandles(key)) {   // Telegramm aus dem aktuellen Zustand bauen
+    setState(key, src);
+    ledWrite(HIGH);
+    bool ok = protoSend(key);
+    ledWrite(LOW);
+    return ok;
+  }
   auto it = commands.find(key);
   if (it == commands.end() || it->second.frames.empty()) return false;
   setState(key, src);
@@ -545,6 +558,7 @@ void apiStatus() {
   ota["state"] = otaState;
   ota["error"] = otaError;
   ota["file"] = UPDATE_FILE;
+  protoToJson(d["proto"].to<JsonObject>());
   d["uptimeS"] = millis() / 1000;
   d["ap"] = apMode;
   d["ip"] = apMode ? WiFi.softAPIP().toString() : WiFi.localIP().toString();
@@ -704,6 +718,7 @@ void apiCommandsGet() {
     JsonObject o = d[kv.first].to<JsonObject>();
     o["label"] = kv.second.label;
     o["group"] = groupOf(kv.first);
+    o["sendable"] = !kv.second.frames.empty() || protoHandles(kv.first);
     JsonArray a = o["frames"].to<JsonArray>();
     for (auto &f : kv.second.frames) a.add(f);
   }
@@ -888,6 +903,7 @@ void apiRestart() {
 
 // ================================================================= Klima
 #include "klima.h"
+#include "proto.h"
 
 // ================================================================= Webseiten
 const char PAGE_ROOT[] PROGMEM = R"HTML(<!doctype html><html lang="de"><head><meta charset="utf-8">
@@ -938,6 +954,7 @@ void setupRoutes() {
   server.on("/api/restart", HTTP_POST, apiRestart);
   server.on("/api/ota/github", HTTP_POST, apiOtaGithub);
   klimaRoutes();
+  protoRoutes();
 
   server.on("/update", HTTP_GET, [] { server.send_P(200, "text/html", PAGE_UPDATE); });
   server.on(
@@ -1049,6 +1066,8 @@ void setup() {
   loadConfig();
   loadCommands();
   loadSchedules();
+  loadProto();
+  if (panel.known) panelToState("Speicher");
   klimaSetup();
 
   frameQ = xQueueCreate(48, sizeof(RawFrame));
@@ -1093,6 +1112,7 @@ void loop() {
   }
 
   klimaLoop();
+  protoLoop();
   if (otaPending) {
     klimaBeforeRestart();
     runGithubOta();

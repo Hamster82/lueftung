@@ -549,7 +549,7 @@ private fun RuleDialog(
                     DropdownMenu(expanded = cmdMenu, onDismissRequest = { cmdMenu = false }) {
                         cmds.forEach { c ->
                             DropdownMenuItem(
-                                text = { Text(c.label + if (c.learned) "" else "  (nicht angelernt)") },
+                                text = { Text(c.label + if (c.sendable) "" else "  (nicht angelernt)") },
                                 onClick = { cmd = c.key; cmdMenu = false }
                             )
                         }

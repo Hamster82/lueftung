@@ -38,9 +38,71 @@ data class Status(
     val variant: String = "",
     val otaState: String = "",
     val otaError: String = "",
+    val proto: ProtoInfo? = null,
 )
 
-data class Cmd(val key: String, val label: String, val group: String, val frames: List<String>) {
+data class ProtoInfo(
+    val enabled: Boolean,
+    val sync: Boolean,
+    val inSync: Boolean,
+    val mergeCount: Long,
+    val hLevels: List<Int>,
+    val hOff: Int,
+    val panelText: String,
+    val panelAgoS: Long,
+    val seenKnown: Boolean,
+    val seenV: Int,
+    val seenH: Int,
+    val seenM: Int,
+    val masterCount: Long,
+    val masterText: String,
+    val masterV: Int?,
+    val runStufe: Int?,
+    val runDir: Int?,
+    val masterAgoS: Long,
+    val masterIntervalS: Long,
+    val masterSlots: String,
+) {
+    fun feuchteLabel(h: Int): String {
+        if (h == hOff) return "Feuchte aus"
+        val i = hLevels.indexOf(h)
+        return if (i >= 0) "Feuchte ${i + 1}" else "Feuchte H$h"
+    }
+    fun stufeLabel(v: Int) = if (v == 0) "Aus" else "Stufe " + listOf("I", "II", "III", "IV", "V").getOrElse(v - 1) { v.toString() }
+    fun modusLabel(m: Int) = when (m) { 1 -> "Abluft"; 2 -> "Zuluft"; 3 -> "WRG"; else -> "Modus $m" }
+}
+
+fun parseProto(o: JSONObject?): ProtoInfo? {
+    if (o == null) return null
+    val p = o.optJSONObject("panel") ?: JSONObject()
+    val s = o.optJSONObject("seen") ?: JSONObject()
+    val m = o.optJSONObject("master") ?: JSONObject()
+    val hl = o.optJSONArray("hLevels") ?: JSONArray()
+    return ProtoInfo(
+        enabled = o.optBoolean("enabled", true),
+        sync = o.optBoolean("sync", true),
+        inSync = o.optBoolean("inSync", true),
+        mergeCount = o.optLong("mergeCount"),
+        hLevels = List(hl.length()) { hl.optInt(it) },
+        hOff = o.optInt("hOff", 99),
+        panelText = p.optString("text"),
+        panelAgoS = p.optLong("agoS", -1),
+        seenKnown = s.optBoolean("known"),
+        seenV = s.optInt("v"),
+        seenH = s.optInt("h"),
+        seenM = s.optInt("m"),
+        masterCount = m.optLong("count"),
+        masterText = m.optString("text"),
+        masterV = if (m.has("v")) m.optInt("v") else null,
+        runStufe = if (m.has("runStufe")) m.optInt("runStufe") else null,
+        runDir = if (m.has("runDir")) m.optInt("runDir") else null,
+        masterAgoS = m.optLong("agoS", -1),
+        masterIntervalS = m.optLong("intervalS", -1),
+        masterSlots = m.optString("slots"),
+    )
+}
+
+data class Cmd(val key: String, val label: String, val group: String, val frames: List<String>, val sendable: Boolean = frames.isNotEmpty()) {
     val learned get() = frames.isNotEmpty()
 }
 
@@ -149,6 +211,7 @@ class Api(private val hostProvider: () -> String) {
             variant = o.optString("variant"),
             otaState = o.optJSONObject("ota")?.optString("state").orEmpty(),
             otaError = o.optJSONObject("ota")?.optString("error").orEmpty(),
+            proto = parseProto(o.optJSONObject("proto")),
         )
     }
 
@@ -158,7 +221,8 @@ class Api(private val hostProvider: () -> String) {
         for (k in o.keys()) {
             val c = o.getJSONObject(k)
             val fr = c.optJSONArray("frames") ?: JSONArray()
-            list += Cmd(k, c.optString("label", k), c.optString("group", "sonst"), List(fr.length()) { fr.getString(it) })
+            val frames = List(fr.length()) { fr.getString(it) }
+            list += Cmd(k, c.optString("label", k), c.optString("group", "sonst"), frames, c.optBoolean("sendable", frames.isNotEmpty()))
         }
         return list
     }
@@ -252,4 +316,12 @@ class Api(private val hostProvider: () -> String) {
     suspend fun restart() { post("/api/restart") }
 
     suspend fun onlineUpdate() { post("/api/ota/github") }
+
+    suspend fun saveProto(enabled: Boolean?, sync: Boolean?, hLevels: List<Int>?) {
+        val o = JSONObject()
+        if (enabled != null) o.put("enabled", enabled)
+        if (sync != null) o.put("sync", sync)
+        if (hLevels != null) o.put("hLevels", JSONArray(hLevels))
+        post("/api/proto", o)
+    }
 }

@@ -68,6 +68,7 @@ fun BusScreen(vm: MainViewModel) {
         item { DeviceCard(vm, status, error) }
 
         if (status != null) {
+            status?.proto?.let { p -> item { ProtoCard(vm, p) } }
             item { BusConfigCard(vm) }
 
             item {
@@ -286,4 +287,56 @@ private fun NumField(label: String, value: String, modifier: Modifier, onChange:
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = modifier
     )
+}
+
+@Composable
+private fun ProtoCard(vm: MainViewModel, p: ProtoInfo) {
+    var h by remember(p.hLevels) { mutableStateOf(p.hLevels.joinToString(" ")) }
+    val parsed = h.trim().split(Regex("[ ,;]+")).mapNotNull { it.toIntOrNull() }
+    Section("Protokoll") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Telegramme selbst erzeugen", style = MaterialTheme.typography.bodyLarge)
+                Text("Stufe, Feuchte und Betriebsart werden einzeln gesetzt, ohne Anlernen.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = p.enabled, onCheckedChange = { vm.saveProto(enabled = it) })
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Abgleich mit dem Bedienteil", style = MaterialTheme.typography.bodyLarge)
+                Text("Tippen am Bedienteil ändert nur die dort gedrückte Einstellung.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = p.sync, onCheckedChange = { vm.saveProto(sync = it) }, enabled = p.enabled)
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = h, onValueChange = { h = it },
+                label = { Text("H-Werte Feuchte 1–5") }, singleLine = true,
+                textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = { vm.saveProto(hLevels = parsed) }, enabled = parsed.size == 5 && parsed != p.hLevels) { Text("Speichern") }
+        }
+        Text("Gesichert: 40, 45, 50. Für 4 und 5 am Bedienteil drücken und unten den H-Wert ablesen. H${p.hOff} = Feuchtesteuerung aus.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            buildString {
+                append("Bedienteil zuletzt: ")
+                append(if (p.seenKnown) "V${p.seenV} H${p.seenH} M${p.seenM}" else "–")
+                if (p.panelAgoS >= 0) append(" (vor ${p.panelAgoS} s)")
+                append("\nWirksam: ").append(p.panelText.removePrefix("Bedienfeld:"))
+                append("\nMaster: ").append(if (p.masterCount > 0) p.masterText else "–")
+                if (p.masterAgoS >= 0) append(" (vor ${p.masterAgoS} s")
+                if (p.masterIntervalS > 0) append(", alle ${p.masterIntervalS} s")
+                if (p.masterAgoS >= 0) append(")")
+                if (p.masterCount > 0) append("\n6 Byte im Master-Telegramm: ").append(p.masterSlots)
+                if (p.mergeCount > 0) append("\nAbgeglichen: ${p.mergeCount}×")
+            },
+            fontFamily = FontFamily.Monospace, fontSize = 12.sp
+        )
+    }
 }

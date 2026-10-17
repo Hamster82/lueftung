@@ -55,7 +55,7 @@ fun ControlScreen(vm: MainViewModel) {
             return@Column
         }
 
-        if (cmds.isNotEmpty() && cmds.none { it.learned }) {
+        if (cmds.isNotEmpty() && cmds.none { it.sendable }) {
             Section("Noch nichts angelernt") {
                 Text(
                     "Die Tasten werden aktiv, sobald du im Reiter „Anlernen“ die Telegramme vom Bedienfeld aufgezeichnet hast.",
@@ -64,9 +64,35 @@ fun ControlScreen(vm: MainViewModel) {
             }
         }
 
+        // ---------------------------------------------------- Abgleich mit dem Bedienteil
+        val pr = s.proto
+        if (pr != null && pr.enabled && pr.seenKnown && !pr.inSync) {
+            Section("Bedienteil zeigt etwas anderes") {
+                Text(
+                    "Anzeige am Bedienteil: ${pr.stufeLabel(pr.seenV)} · ${pr.feuchteLabel(pr.seenH)} · ${pr.modusLabel(pr.seenM)}",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "Das Bedienteil bekommt Änderungen aus der App nicht mit. Wird dort getippt, übernimmt die Brücke nur die " +
+                        "dort geänderte Einstellung und behält den Rest aus der App bei.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
         // ---------------------------------------------------- Stufe
         Section("Lüftungsstufe") {
             StateLine(s.stufe)
+            if (pr != null && pr.runStufe != null && pr.masterAgoS in 0..600) {
+                Text(
+                    "Lüfter melden: ${pr.stufeLabel(pr.runStufe)}" +
+                        (if (pr.runDir == 1) " · Richtung A" else if (pr.runDir == 2) " · Richtung B" else "") +
+                        " (vor ${pr.masterAgoS} s)",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
             Spacer(Modifier.height(8.dp))
             CmdRow(listOf("aus", "stufe1", "stufe2", "stufe3", "stufe4", "stufe5"), byKey, s.stufe.key, vm, short = true)
         }
@@ -85,7 +111,7 @@ fun ControlScreen(vm: MainViewModel) {
                         FilterChip(selected = minutes == m, onClick = { minutes = m }, label = { Text("$m min") })
                     }
                 }
-                val boostKey = listOf("stufe5", "stufe4").firstOrNull { byKey[it]?.learned == true }
+                val boostKey = listOf("stufe5", "stufe4").firstOrNull { byKey[it]?.sendable == true }
                 Button(
                     onClick = { boostKey?.let { vm.sendCmd(it, minutes) } },
                     enabled = boostKey != null,
@@ -98,7 +124,7 @@ fun ControlScreen(vm: MainViewModel) {
         Section("Feuchte") {
             StateLine(s.feuchte)
             Spacer(Modifier.height(8.dp))
-            CmdRow(listOf("feuchte1", "feuchte2", "feuchte3", "feuchte4", "feuchte5"), byKey, s.feuchte.key, vm, short = true)
+            CmdRow(listOf("feuchte0", "feuchte1", "feuchte2", "feuchte3", "feuchte4", "feuchte5"), byKey, s.feuchte.key, vm, short = true)
         }
         Section("Betriebsart") {
             StateLine(s.modus)
@@ -106,7 +132,7 @@ fun ControlScreen(vm: MainViewModel) {
             CmdRow(listOf("modus1", "modus2", "modus3"), byKey, s.modus.key, vm)
         }
 
-        val extra = cmds.filter { it.group == "sonst" && it.learned }
+        val extra = cmds.filter { it.group == "sonst" && it.sendable }
         if (extra.isNotEmpty()) {
             Section("Weitere Befehle") {
                 extra.chunked(3).forEach { row ->
@@ -147,11 +173,12 @@ private fun CmdRow(keys: List<String>, byKey: Map<String, Cmd>, current: String?
             val label = when {
                 short && k == "aus" -> "Aus"
                 short && k.startsWith("stufe") -> listOf("I", "II", "III", "IV", "V").getOrElse(k.removePrefix("stufe").toIntOrNull()?.minus(1) ?: 0) { k }
+                short && k == "feuchte0" -> "Aus"
                 short && k.startsWith("feuchte") -> k.removePrefix("feuchte")
                 (c?.label ?: "").let { l -> l.startsWith("W") && l.contains("rmer") } -> "WRG"
                 else -> c?.label ?: k
             }
-            val enabled = c?.learned == true
+            val enabled = c?.sendable == true
             val mod = Modifier
                 .weight(1f)
                 .height(48.dp)
