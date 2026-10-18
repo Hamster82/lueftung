@@ -128,6 +128,44 @@ fun ClimateScreen(vm: MainViewModel) {
         Section("Verlauf 24 Stunden") { HistoryChart(history) }
         RulesCard(k, cmds, vm)
         PlaceCard(k, vm)
+        ShellyCard(status?.ip.orEmpty(), k)
+    }
+}
+
+// ------------------------------------------------------------------ Raumsensor per WLAN
+@Composable
+private fun ShellyCard(ip: String, k: Klima) {
+    val clip = androidx.compose.ui.platform.LocalClipboardManager.current
+    val base = "http://$ip/api/klima/sensor"
+    val urlHum = base + "?inRH=\${ev.rh}&inT=\${status[\"temperature:0\"].tC}&src=Shelly"
+    val urlTemp = base + "?inT=\${ev.tC}&inRH=\${status[\"humidity:0\"].rh}&src=Shelly"
+    var copied by remember { mutableStateOf("") }
+    Section("Raumsensor per WLAN (Shelly H&T)") {
+        Text(
+            if (k.indoor.valid && k.indoor.src == "Shelly") "Verbunden – letzter Wert vor ${k.indoor.agoS / 60} min."
+            else "Ein Shelly H&T Gen3 liefert Raumtemperatur und -feuchte ohne Cloud direkt an die Brücke.",
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "In der Shelly-App bzw. auf der Weboberfläche des Sensors unter Aktionen zwei Aktionen anlegen und jeweils diese Adresse eintragen:",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        listOf("Bei Feuchteänderung" to urlHum, "Bei Temperaturänderung" to urlTemp).forEach { (title, url) ->
+            Spacer(Modifier.height(6.dp))
+            Text(title, style = MaterialTheme.typography.labelLarge)
+            Text(url, fontSize = 11.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            TextButton(onClick = {
+                clip.setText(androidx.compose.ui.text.AnnotatedString(url))
+                copied = title
+            }) { Text(if (copied == title) "Kopiert" else "Adresse kopieren") }
+        }
+        Text(
+            "Tipp: Im Router eine feste IP für die Brücke vergeben, sonst stimmt die Adresse nach einem Neustart evtl. nicht mehr.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

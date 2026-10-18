@@ -111,6 +111,9 @@ void histLoad() {
   f.close();
 }
 
+// Funk-/Batteriesensoren (Shelly H&T) melden nur bei Aenderung -> laenger gueltig
+uint32_t indoorMaxAge() { return indoor.src == "SHT40" || indoor.src == "SHT30" ? 900000UL : 21600000UL; }
+
 bool readingFresh(const Reading &r, uint32_t maxAgeMs) {
   return r.valid && (millis() - r.at) < maxAgeMs;
 }
@@ -122,7 +125,7 @@ void histTick() {
   if (slot == lastHistSlot) return;
   lastHistSlot = slot;
   bool oOk = readingFresh(outdoor, 3600000UL);
-  bool iOk = readingFresh(indoor, 900000UL);
+  bool iOk = readingFresh(indoor, indoorMaxAge());
   HistPoint p;
   p.epoch = slot * HIST_STEP;
   p.oT = enc10(oOk, outdoor.t);
@@ -198,7 +201,7 @@ void indoorTick() {
   if (lastIndoorRead && millis() - lastIndoorRead < 30000UL) return;
   lastIndoorRead = millis();
   // externer Wert hat Vorrang, solange er frisch ist
-  if (indoor.src == "extern" && readingFresh(indoor, 900000UL)) return;
+  if (indoor.src != "SHT40" && indoor.src != "SHT30" && indoor.src.length() && readingFresh(indoor, indoorMaxAge())) return;
   float t, rh;
   if (shtRead(t, rh)) {
     indoor.valid = true;
@@ -234,7 +237,7 @@ bool fetchWeather() {
   JsonVariant c = d["current"];
   if (!c["temperature_2m"].is<float>() || !c["relative_humidity_2m"].is<float>()) { weatherErr = "Werte fehlen"; return false; }
   // externer Aussenwert hat Vorrang, solange er frisch ist
-  if (outdoor.src == "extern" && readingFresh(outdoor, 3600000UL)) { weatherErr = ""; return true; }
+  if (outdoor.src != "Open-Meteo" && outdoor.src.length() && readingFresh(outdoor, 3600000UL)) { weatherErr = ""; return true; }
   outdoor.valid = true;
   outdoor.t = c["temperature_2m"].as<float>();
   outdoor.rh = c["relative_humidity_2m"].as<float>();
@@ -257,7 +260,7 @@ void weatherTick() {
 // ---------------------------------------------------------------- Regeln
 bool sensorValue(const String &s, float &v) {
   bool oOk = readingFresh(outdoor, 3600000UL);
-  bool iOk = readingFresh(indoor, 900000UL);
+  bool iOk = readingFresh(indoor, indoorMaxAge());
   if (s == "aussenT") { v = outdoor.t; return oOk; }
   if (s == "aussenRH") { v = outdoor.rh; return oOk; }
   if (s == "innenT") { v = indoor.t; return iOk; }
@@ -378,7 +381,7 @@ void readingToJson(JsonObject o, const Reading &r, uint32_t maxAge) {
 void apiKlimaGet() {
   JsonDocument d;
   readingToJson(d["outdoor"].to<JsonObject>(), outdoor, 3600000UL);
-  readingToJson(d["indoor"].to<JsonObject>(), indoor, 900000UL);
+  readingToJson(d["indoor"].to<JsonObject>(), indoor, indoorMaxAge());
   d["sensor"] = shtType == 4 ? "SHT40" : shtType == 3 ? "SHT30" : "";
   d["weatherErr"] = weatherErr;
   JsonObject c = d["cfg"].to<JsonObject>();
@@ -454,23 +457,57 @@ void apiKlimaRules() {
 }
 
 // externe Werte, z. B. aus ioBroker: {"outT":..,"outRH":..,"inT":..,"inRH":..}
+// Werte von aussen einspeisen.
+//  POST JSON {"outT":..,"outRH":..,"inT":..,"inRH":..} (z. B. ioBroker)
+//  oder GET  /api/klima/sensor?inT=21.5&inRH=48&src=Shelly  (z. B. Shelly-H&T-Aktion)
+//  Einzelwerte sind erlaubt; fehlende Werte bleiben unveraendert.
+void setExt(Reading &r, bool hasT, float t, bool hasRH, float rh, const String &src) {
+  if (!hasT && !hasRH) return;
+  if (hasT) r.t = t;
+  if (hasRH) r.rh = rh;
+  if (isnan(r.t) || isnan(r.rh)) {   // erster Wert: der andere fehlt noch
+    r.at = millis();
+    r.src = src;
+    r.valid = !isnan(r.t) && !isnan(r.rh);
+    return;
+  }
+  r.valid = true;
+  r.at = millis();
+  r.src = src;
+}
+
+static bool argF(const char *name, float &v) {
+  if (!server.hasArg(name)) return false;
+  String s = server.arg(name);
+  s.replace(',', '.');
+  if (!s.length() || s.indexOf('$') >= 0) return false;   // nicht ersetzter Platzhalter
+  v = s.toFloat();
+  return true;
+}
+
 void apiKlimaSensor() {
-  JsonDocument d;
-  if (!body(d)) return sendErr(400, "JSON fehlt");
-  if (d["outT"].is<float>() && d["outRH"].is<float>()) {
-    outdoor.valid = true;
-    outdoor.t = d["outT"];
-    outdoor.rh = d["outRH"];
-    outdoor.at = millis();
-    outdoor.src = "extern";
+  float oT = NAN, oRH = NAN, iT = NAN, iRH = NAN;
+  bool hoT = false, hoRH = false, hiT = false, hiRH = false;
+  String src = server.hasArg("src") ? server.arg("src") : String("extern");
+  if (server.method() == HTTP_POST && server.hasArg("plain")) {
+    JsonDocument d;
+    if (deserializeJson(d, server.arg("plain"))) return sendErr(400, "JSON ungueltig");
+    if (d["outT"].is<float>()) { oT = d["outT"]; hoT = true; }
+    if (d["outRH"].is<float>()) { oRH = d["outRH"]; hoRH = true; }
+    if (d["inT"].is<float>()) { iT = d["inT"]; hiT = true; }
+    if (d["inRH"].is<float>()) { iRH = d["inRH"]; hiRH = true; }
+    if (d["src"].is<const char *>()) src = d["src"].as<String>();
+  } else {
+    hoT = argF("outT", oT);
+    hoRH = argF("outRH", oRH);
+    hiT = argF("inT", iT);
+    hiRH = argF("inRH", iRH);
   }
-  if (d["inT"].is<float>() && d["inRH"].is<float>()) {
-    indoor.valid = true;
-    indoor.t = d["inT"];
-    indoor.rh = d["inRH"];
-    indoor.at = millis();
-    indoor.src = "extern";
-  }
+  if (!hoT && !hoRH && !hiT && !hiRH) return sendErr(400, "Keine Werte (inT, inRH, outT, outRH)");
+  if (hiRH && (iRH < 0 || iRH > 100)) return sendErr(400, "Feuchte ausserhalb 0..100");
+  if (hoRH && (oRH < 0 || oRH > 100)) return sendErr(400, "Feuchte ausserhalb 0..100");
+  setExt(outdoor, hoT, oT, hoRH, oRH, src);
+  setExt(indoor, hiT, iT, hiRH, iRH, src);
   sendOk();
 }
 
@@ -517,6 +554,7 @@ void klimaRoutes() {
   server.on("/api/klima/config", HTTP_POST, apiKlimaConfig);
   server.on("/api/klima/rules", HTTP_POST, apiKlimaRules);
   server.on("/api/klima/sensor", HTTP_POST, apiKlimaSensor);
+  server.on("/api/klima/sensor", HTTP_GET, apiKlimaSensor);
   server.on("/api/klima/refresh", HTTP_POST, apiKlimaRefresh);
   server.on("/api/history", HTTP_GET, apiHistory);
 }

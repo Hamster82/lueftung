@@ -132,5 +132,5 @@ die App (`Lueftung.apk`) und die Firmware und legt alles unter **Releases** ab.
 | GET | `/api/klima` | Außen-/Innenwerte, Regeln, Automatik-Zustand |
 | POST | `/api/klima/config` `{lat, lon, place, autoEn, holdMin}` | Ort und Automatik |
 | POST | `/api/klima/rules` `[{sensor, op, value, hyst, cmd, en}]` | Regeln (sensor: aussenT, aussenRH, innenT, innenRH, absDiff) |
-| POST | `/api/klima/sensor` `{outT, outRH, inT, inRH}` | Werte von außen einspeisen, z. B. aus ioBroker |
+| POST/GET | `/api/klima/sensor` `{outT, outRH, inT, inRH, src}` | Werte von außen einspeisen, z. B. ioBroker oder Shelly H&T (`?inRH=${ev.rh}&inT=${status["temperature:0"].tC}&src=Shelly`) |
 | GET | `/api/history` | 24-h-Verlauf in 5-min-Schritten |

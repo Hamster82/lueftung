@@ -31,7 +31,7 @@
 #include <vector>
 #include <time.h>
 
-#define FW_VERSION "1.2.0"
+#define FW_VERSION "1.2.1"
 #ifndef FW_VARIANT
 #define FW_VARIANT "devkit"
 #endif
