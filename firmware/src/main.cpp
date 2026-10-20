@@ -31,7 +31,7 @@
 #include <vector>
 #include <time.h>
 
-#define FW_VERSION "1.2.1"
+#define FW_VERSION "1.2.2"
 #ifndef FW_VARIANT
 #define FW_VARIANT "devkit"
 #endif
@@ -107,7 +107,7 @@ struct FrameRec {
   String known;
   bool tx = false;
 };
-static const int RING = 200;
+static const int RING = 400;
 FrameRec ring[RING];
 uint32_t frameSeq = 0;
 
@@ -471,22 +471,48 @@ void processFrame(const RawFrame &f) {
   pushRing(hex, f.t, isNew, known, false);
 }
 
+// ---------------------------------------------------------------- Sendeschutz
+bool txListenOnly = false;          // nur mitlesen, nie senden
+String txTag;                       // Grund des naechsten Sendens (fuers Protokoll)
+uint32_t txTimes[8] = {0};
+int txIdx = 0;
+uint32_t txBlockedUntil = 0;        // Flutsperre
+uint32_t txFloodCount = 0;
+
+bool txAllowed() {
+  if (txListenOnly) return false;
+  uint32_t now = millis();
+  if (txBlockedUntil && (int32_t)(txBlockedUntil - now) > 0) return false;
+  txBlockedUntil = 0;
+  // mehr als 8 Telegramme in 60 s -> 10 min Sendesperre (Schutz vor Hin-und-Her)
+  uint32_t oldest = txTimes[txIdx];
+  if (oldest && now - oldest < 60000UL) {
+    txBlockedUntil = now + 600000UL;
+    txFloodCount++;
+    return false;
+  }
+  return true;
+}
+
 bool sendFrames(const std::vector<String> &frames) {
   if (frames.empty()) return false;
+  if (!txAllowed()) return false;
   for (uint8_t r = 0; r < cfg.repeat; r++) {
     for (auto &h : frames) {
       std::vector<uint8_t> b;
       if (!fromHex(h, b)) continue;
-      // auf Busruhe warten (max. 300 ms)
+      txTimes[txIdx] = millis();
+      txIdx = (txIdx + 1) % 8;
+      // auf Busruhe warten (max. 300 ms): kein Telegramm in Arbeit und 15 ms still
       uint32_t w0 = millis();
-      while (millis() - lastRxMs < 15 && millis() - w0 < 300) delay(1);
+      while ((Serial2.available() || millis() - lastRxMs < 15) && millis() - w0 < 300) delay(1);
       deWrite(HIGH);
       delayMicroseconds(80);
       Serial2.write(b.data(), b.size());
       Serial2.flush();
       delayMicroseconds(2000000UL / cfg.baud + 20);  // Stoppbit sicher raus
       deWrite(LOW);
-      pushRing(toHex(b.data(), b.size()), millis(), false, matchCommand(toHex(b.data(), b.size())), true);
+      pushRing(toHex(b.data(), b.size()), millis(), false, txTag.length() ? txTag : matchCommand(toHex(b.data(), b.size())), true);
       delay(cfg.sendGapMs);
     }
   }
@@ -494,11 +520,14 @@ bool sendFrames(const std::vector<String> &frames) {
 }
 
 bool executeCommand(const String &key, const String &src) {
+  txTag = src;
   if (protoHandles(key)) {   // Telegramm aus dem aktuellen Zustand bauen
+    GroupState before = state[groupOf(key)];
     setState(key, src);
     ledWrite(HIGH);
     bool ok = protoSend(key);
     ledWrite(LOW);
+    if (!ok) state[groupOf(key)] = before;   // nicht gesendet -> Zustand nicht verfaelschen
     return ok;
   }
   auto it = commands.find(key);
@@ -674,16 +703,18 @@ void apiCmd() {
   String key = d["key"] | "";
   int minutes = d["minutes"] | 0;
   if (!commands.count(key)) return sendErr(404, "Unbekannter Befehl");
-  if (commands[key].frames.empty()) return sendErr(409, "Befehl noch nicht angelernt");
+  if (commands[key].frames.empty() && !protoHandles(key)) return sendErr(409, "Befehl noch nicht angelernt");
+  if (txListenOnly) return sendErr(409, "Senden ist ausgeschaltet (Nur mitlesen)");
+  if (txBlockedUntil) return sendErr(409, "Senden voruebergehend gesperrt (zu viele Telegramme) - im Reiter Bus freigeben");
   String prev = state["stufe"].key;
   if (minutes > 0 && groupOf(key) == "stufe") {
-    executeCommand(key, "Stosslueften");
+    if (!executeCommand(key, "Stosslueften")) return sendErr(503, "Senden fehlgeschlagen");
     boost.active = true;
     boost.until = millis() + (uint32_t)minutes * 60000UL;
     boost.key = key;
     boost.backKey = (prev.length() && prev != key) ? prev : "";
   } else {
-    executeCommand(key, "App");
+    if (!executeCommand(key, "App")) return sendErr(503, "Senden fehlgeschlagen");
   }
   sendOk();
 }
@@ -708,7 +739,8 @@ void apiSend() {
     if (!h.length()) return sendErr(400, "Ungueltiger Hex-Wert");
     frames.push_back(h);
   }
-  sendFrames(frames);
+  txTag = "Test";
+  if (!sendFrames(frames)) return sendErr(409, "Senden gesperrt oder ausgeschaltet");
   sendOk();
 }
 

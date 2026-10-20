@@ -289,8 +289,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun restartDevice() = act("Gerät startet neu") { api.restart() }
 
-    fun saveProto(enabled: Boolean? = null, sync: Boolean? = null, hLevels: List<Int>? = null) = act("Gespeichert") {
-        api.saveProto(enabled, sync, hLevels)
+    fun saveProto(enabled: Boolean? = null, sync: Boolean? = null, hLevels: List<Int>? = null, listenOnly: Boolean? = null, unblock: Boolean = false) = act("Gespeichert") {
+        api.saveProto(enabled, sync, hLevels, listenOnly, unblock)
         refreshStatus()
         runCatching { _commands.value = api.commands() }
     }

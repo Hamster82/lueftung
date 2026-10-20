@@ -62,6 +62,10 @@ data class ProtoInfo(
     val masterAgoS: Long,
     val masterIntervalS: Long,
     val masterSlots: String,
+    val listenOnly: Boolean = false,
+    val insistCount: Long = 0,
+    val floodCount: Long = 0,
+    val txBlockedS: Long = 0,
 ) {
     fun feuchteLabel(h: Int): String {
         if (h == hOff) return "Feuchte aus"
@@ -99,6 +103,10 @@ fun parseProto(o: JSONObject?): ProtoInfo? {
         masterAgoS = m.optLong("agoS", -1),
         masterIntervalS = m.optLong("intervalS", -1),
         masterSlots = m.optString("slots"),
+        listenOnly = o.optBoolean("listenOnly"),
+        insistCount = o.optLong("insistCount"),
+        floodCount = o.optLong("floodCount"),
+        txBlockedS = o.optLong("txBlockedS"),
     )
 }
 
@@ -317,8 +325,10 @@ class Api(private val hostProvider: () -> String) {
 
     suspend fun onlineUpdate() { post("/api/ota/github") }
 
-    suspend fun saveProto(enabled: Boolean?, sync: Boolean?, hLevels: List<Int>?) {
+    suspend fun saveProto(enabled: Boolean?, sync: Boolean?, hLevels: List<Int>?, listenOnly: Boolean? = null, unblock: Boolean = false) {
         val o = JSONObject()
+        if (listenOnly != null) o.put("listenOnly", listenOnly)
+        if (unblock) o.put("unblock", true)
         if (enabled != null) o.put("enabled", enabled)
         if (sync != null) o.put("sync", sync)
         if (hLevels != null) o.put("hLevels", JSONArray(hLevels))

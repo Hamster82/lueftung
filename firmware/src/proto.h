@@ -37,6 +37,9 @@ uint32_t lastSentAt = 0;
 bool correctionPending = false;
 uint32_t correctionAt = 0;
 uint32_t mergeCount = 0;
+uint32_t insistCount = 0;          // Bedienteil hat kurz nach unserem Senden widersprochen
+uint32_t lastCorrectionAt = 0;
+PanelState lastSent;
 
 struct MasterInfo {
   String text;          // Teil nach den 6 Byte, z. B. "V66"
@@ -49,7 +52,8 @@ struct MasterInfo {
 
 struct ProtoCfg {
   bool enabled = true;                  // Telegramme selbst erzeugen
-  bool sync = true;                     // Abgleich mit dem Bedienteil
+  bool sync = false;                    // Abgleich mit dem Bedienteil (Korrektur nach Tastendruck)
+  bool listenOnly = false;              // nur mitlesen, nichts senden
   int hLevels[5] = {40, 45, 50, 55, 60};
   int hOff = 99;
 } pcfg;
@@ -151,7 +155,11 @@ bool protoOnFrame(const uint8_t *d, size_t n) {
       in.at = millis();
       in.known = true;
       PanelState merged = in;
-      if (pcfg.sync && pcfg.enabled && panelSeen.known && panel.known) {
+      // Widerspricht das Bedienteil kurz nach unserem Senden, gilt sein Zustand und es
+      // wird NICHT korrigiert -> kein Hin-und-Her auf dem Bus
+      bool insist = lastSentAt && millis() - lastSentAt < 3000 && !sameVHM(in, lastSent);
+      if (insist) insistCount++;
+      if (!insist && pcfg.sync && pcfg.enabled && panelSeen.known && panel.known) {
         // nur die Felder uebernehmen, die am Bedienteil geaendert wurden
         merged = panel;
         if (in.v != panelSeen.v) merged.v = in.v;
@@ -169,7 +177,7 @@ bool protoOnFrame(const uint8_t *d, size_t n) {
       (void)changed;
       savePanel();
       panelToState("Bedienfeld");
-      if (!sameVHM(merged, in)) {
+      if (!sameVHM(merged, in) && (!lastCorrectionAt || millis() - lastCorrectionAt > 10000UL)) {
         correctionPending = true;
         correctionAt = millis() + 150;   // Master erst antworten lassen
         mergeCount++;
@@ -214,11 +222,11 @@ bool protoSend(const String &key) {
   String t = panelText(p);
   std::vector<String> fr;
   fr.push_back(toHex((const uint8_t *)t.c_str(), t.length()));
-  lastSentText = t;
-  lastSentAt = millis();
   bool ok = sendFrames(fr);
-  lastSentAt = millis();
   if (ok) {
+    lastSentText = t;
+    lastSent = p;
+    lastSentAt = millis();
     panel.v = p.v; panel.h = p.h; panel.m = p.m;
     panel.known = true;
     savePanel();
@@ -231,29 +239,37 @@ void loadProto() {
   JsonDocument d;
   if (readJson("/proto.json", d)) {
     pcfg.enabled = d["enabled"] | true;
-    pcfg.sync = d["sync"] | true;
+    pcfg.sync = d["sync2"] | false;   // neuer Schluessel: Abgleich muss neu eingeschaltet werden
+    pcfg.listenOnly = d["listenOnly"] | false;
     pcfg.hOff = d["hOff"] | 99;
     JsonArray a = d["hLevels"].as<JsonArray>();
     if (a.size() == 5)
       for (int i = 0; i < 5; i++) pcfg.hLevels[i] = a[i] | pcfg.hLevels[i];
   }
   loadPanel();
+  txListenOnly = pcfg.listenOnly;
 }
 
 void saveProto() {
   JsonDocument d;
   d["enabled"] = pcfg.enabled;
-  d["sync"] = pcfg.sync;
+  d["sync2"] = pcfg.sync;
+  d["listenOnly"] = pcfg.listenOnly;
   d["hOff"] = pcfg.hOff;
   JsonArray a = d["hLevels"].to<JsonArray>();
   for (int i = 0; i < 5; i++) a.add(pcfg.hLevels[i]);
   writeJson("/proto.json", d);
+  txListenOnly = pcfg.listenOnly;
 }
 
 void protoToJson(JsonObject o) {
   o["enabled"] = pcfg.enabled;
   o["sync"] = pcfg.sync;
   o["mergeCount"] = mergeCount;
+  o["listenOnly"] = pcfg.listenOnly;
+  o["insistCount"] = insistCount;
+  o["floodCount"] = txFloodCount;
+  o["txBlockedS"] = (txBlockedUntil && (int32_t)(txBlockedUntil - millis()) > 0) ? (int32_t)((txBlockedUntil - millis()) / 1000) : 0;
   o["hOff"] = pcfg.hOff;
   JsonArray a = o["hLevels"].to<JsonArray>();
   for (int i = 0; i < 5; i++) a.add(pcfg.hLevels[i]);
@@ -306,6 +322,8 @@ void apiProtoSet() {
   if (!body(d)) return sendErr(400, "JSON fehlt");
   if (d["enabled"].is<bool>()) pcfg.enabled = d["enabled"];
   if (d["sync"].is<bool>()) pcfg.sync = d["sync"];
+  if (d["listenOnly"].is<bool>()) pcfg.listenOnly = d["listenOnly"];
+  if (d["unblock"].is<bool>() && d["unblock"]) { txBlockedUntil = 0; memset(txTimes, 0, sizeof txTimes); }
   if (d["hOff"].is<int>()) pcfg.hOff = constrain((int)d["hOff"], 0, 99);
   if (d["hLevels"].is<JsonArray>()) {
     JsonArray a = d["hLevels"].as<JsonArray>();
@@ -321,13 +339,17 @@ void apiProtoSet() {
 void protoLoop() {
   if (!correctionPending || (int32_t)(millis() - correctionAt) < 0) return;
   correctionPending = false;
+  if (!pcfg.sync || pcfg.listenOnly) return;
   String t = panelText(panel);
   std::vector<String> fr;
   fr.push_back(toHex((const uint8_t *)t.c_str(), t.length()));
-  lastSentText = t;
-  lastSentAt = millis();
-  sendFrames(fr);
-  lastSentAt = millis();
+  txTag = "Abgleich";
+  if (sendFrames(fr)) {
+    lastSentText = t;
+    lastSent = panel;
+    lastSentAt = millis();
+    lastCorrectionAt = millis();
+  }
 }
 
 void protoRoutes() {

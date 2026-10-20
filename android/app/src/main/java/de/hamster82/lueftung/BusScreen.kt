@@ -294,6 +294,21 @@ private fun ProtoCard(vm: MainViewModel, p: ProtoInfo) {
     var h by remember(p.hLevels) { mutableStateOf(p.hLevels.joinToString(" ")) }
     val parsed = h.trim().split(Regex("[ ,;]+")).mapNotNull { it.toIntOrNull() }
     Section("Protokoll") {
+        if (p.txBlockedS > 0) {
+            Text(
+                "Senden ist für ${p.txBlockedS / 60 + 1} min gesperrt: Die Brücke hat zu viele Telegramme in kurzer Zeit erkannt (Schutz vor Hin-und-Her mit dem Bedienteil).",
+                color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium
+            )
+            TextButton(onClick = { vm.saveProto(unblock = true) }) { Text("Sperre aufheben") }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Nur mitlesen", style = MaterialTheme.typography.bodyLarge)
+                Text("Die Brücke sendet nichts – zum Testen, ob das Bedienteil ohne sie stabil läuft.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = p.listenOnly, onCheckedChange = { vm.saveProto(listenOnly = it) })
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Telegramme selbst erzeugen", style = MaterialTheme.typography.bodyLarge)
@@ -305,7 +320,7 @@ private fun ProtoCard(vm: MainViewModel, p: ProtoInfo) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Abgleich mit dem Bedienteil", style = MaterialTheme.typography.bodyLarge)
-                Text("Tippen am Bedienteil ändert nur die dort gedrückte Einstellung.",
+                Text("Nach einem Tastendruck am Bedienteil schickt die Brücke die übrigen App-Einstellungen hinterher. Standard: aus.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(checked = p.sync, onCheckedChange = { vm.saveProto(sync = it) }, enabled = p.enabled)
@@ -335,6 +350,8 @@ private fun ProtoCard(vm: MainViewModel, p: ProtoInfo) {
                 if (p.masterAgoS >= 0) append(")")
                 if (p.masterCount > 0) append("\n6 Byte im Master-Telegramm: ").append(p.masterSlots)
                 if (p.mergeCount > 0) append("\nAbgeglichen: ${p.mergeCount}×")
+                if (p.insistCount > 0) append("\nBedienteil hat widersprochen: ${p.insistCount}×")
+                if (p.floodCount > 0) append("\nSendesperren wegen Flut: ${p.floodCount}×")
             },
             fontFamily = FontFamily.Monospace, fontSize = 12.sp
         )
